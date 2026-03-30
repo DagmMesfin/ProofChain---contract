@@ -1,6 +1,8 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
+};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -20,17 +22,32 @@ pub enum TxType {
     NonExclusive = 2,
 }
 
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum ContractError {
+    LicenseAlreadyExists = 1,
+    LicenseNotFound = 2,
+    NotCurrentOwner = 3,
+}
+
 #[contract]
 pub struct ProofChainContract;
 
 #[contractimpl]
 impl ProofChainContract {
-    pub fn mint(env: Env, license_id: String, creator: Address, license_type: u32, price: i128) {
+    pub fn mint(
+        env: Env,
+        license_id: String,
+        creator: Address,
+        license_type: u32,
+        price: i128,
+    ) -> Result<(), ContractError> {
         creator.require_auth();
 
         let owner_key = DataKey::Owner(license_id.clone());
         if env.storage().persistent().has(&owner_key) {
-            panic!("license already exists");
+            return Err(ContractError::LicenseAlreadyExists);
         }
 
         env.storage().persistent().set(&owner_key, &creator);
@@ -48,6 +65,8 @@ impl ProofChainContract {
             (symbol_short!("mint"), license_id),
             (TxType::Mint as u32, creator, price),
         );
+
+        Ok(())
     }
 
     pub fn transfer_exclusive(
@@ -56,7 +75,7 @@ impl ProofChainContract {
         seller: Address,
         buyer: Address,
         price: i128,
-    ) {
+    ) -> Result<(), ContractError> {
         seller.require_auth();
 
         let owner_key = DataKey::Owner(license_id.clone());
@@ -64,10 +83,10 @@ impl ProofChainContract {
             .storage()
             .persistent()
             .get::<_, Address>(&owner_key)
-            .unwrap_or_else(|| panic!("license not found"));
+            .ok_or(ContractError::LicenseNotFound)?;
 
         if current_owner != seller {
-            panic!("not current owner");
+            return Err(ContractError::NotCurrentOwner);
         }
 
         env.storage().persistent().set(&owner_key, &buyer);
@@ -79,6 +98,8 @@ impl ProofChainContract {
             (symbol_short!("sale"), license_id),
             (TxType::Exclusive as u32, seller, buyer, price),
         );
+
+        Ok(())
     }
 
     pub fn record_nonexclusive(
@@ -87,7 +108,7 @@ impl ProofChainContract {
         seller: Address,
         buyer: Address,
         price: i128,
-    ) {
+    ) -> Result<(), ContractError> {
         seller.require_auth();
 
         let owner_key = DataKey::Owner(license_id.clone());
@@ -95,30 +116,32 @@ impl ProofChainContract {
             .storage()
             .persistent()
             .get::<_, Address>(&owner_key)
-            .unwrap_or_else(|| panic!("license not found"));
+            .ok_or(ContractError::LicenseNotFound)?;
 
         if current_owner != seller {
-            panic!("not current owner");
+            return Err(ContractError::NotCurrentOwner);
         }
 
         env.events().publish(
             (symbol_short!("sale"), license_id),
             (TxType::NonExclusive as u32, seller, buyer, price),
         );
+
+        Ok(())
     }
 
-    pub fn owner_of(env: Env, license_id: String) -> Address {
+    pub fn owner_of(env: Env, license_id: String) -> Result<Address, ContractError> {
         env.storage()
             .persistent()
             .get::<_, Address>(&DataKey::Owner(license_id))
-            .unwrap_or_else(|| panic!("license not found"))
+            .ok_or(ContractError::LicenseNotFound)
     }
 
-    pub fn creator_of(env: Env, license_id: String) -> Address {
+    pub fn creator_of(env: Env, license_id: String) -> Result<Address, ContractError> {
         env.storage()
             .persistent()
             .get::<_, Address>(&DataKey::Creator(license_id))
-            .unwrap_or_else(|| panic!("license not found"))
+            .ok_or(ContractError::LicenseNotFound)
     }
 }
 
